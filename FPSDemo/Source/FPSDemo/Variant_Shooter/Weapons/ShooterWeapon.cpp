@@ -11,10 +11,15 @@
 #include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Pawn.h"
+#include "Net/UnrealNetwork.h"
 
 AShooterWeapon::AShooterWeapon()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
+	// Enable replication
+	bReplicates = true;
+	SetReplicateMovement(false); // Weapons don't need movement replication as they're attached
 
 	// create the root
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -161,6 +166,12 @@ void AShooterWeapon::FireCooldownExpired()
 
 void AShooterWeapon::FireProjectile(const FVector& TargetLocation)
 {
+	// Only fire on server
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	// get the projectile transform
 	FTransform ProjectileTransform = CalculateProjectileSpawnTransform(TargetLocation);
 	
@@ -188,7 +199,7 @@ void AShooterWeapon::FireProjectile(const FVector& TargetLocation)
 		CurrentBullets = MagazineSize;
 	}
 
-	// update the weapon HUD
+	// update the weapon HUD (will be replicated to clients via OnRep_CurrentBullets)
 	WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize);
 }
 
@@ -215,4 +226,20 @@ const TSubclassOf<UAnimInstance>& AShooterWeapon::GetFirstPersonAnimInstanceClas
 const TSubclassOf<UAnimInstance>& AShooterWeapon::GetThirdPersonAnimInstanceClass() const
 {
 	return ThirdPersonAnimInstanceClass;
+}
+
+void AShooterWeapon::OnRep_CurrentBullets()
+{
+	// Update HUD when bullet count changes on clients
+	if (WeaponOwner)
+	{
+		WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize);
+	}
+}
+
+void AShooterWeapon::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AShooterWeapon, CurrentBullets);
 }

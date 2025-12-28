@@ -12,10 +12,15 @@
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+#include "Net/UnrealNetwork.h"
 
 AShooterProjectile::AShooterProjectile()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
+	// Enable replication
+	bReplicates = true;
+	SetReplicateMovement(true);
 
 	// create the collision component and assign it as the root
 	RootComponent = CollisionComponent = CreateDefaultSubobject<USphereComponent>(TEXT("Collision Component"));
@@ -54,6 +59,12 @@ void AShooterProjectile::EndPlay(EEndPlayReason::Type EndPlayReason)
 
 void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Other, class UPrimitiveComponent* OtherComp, bool bSelfMoved, FVector HitLocation, FVector HitNormal, FVector NormalImpulse, const FHitResult& Hit)
 {
+	// Only process hits on server
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	// ignore if we've already hit something else
 	if (bHit)
 	{

@@ -12,6 +12,7 @@
 #include "Camera/CameraComponent.h"
 #include "TimerManager.h"
 #include "ShooterGameMode.h"
+#include "Net/UnrealNetwork.h"
 
 AShooterCharacter::AShooterCharacter()
 {
@@ -20,6 +21,10 @@ AShooterCharacter::AShooterCharacter()
 
 	// configure movement
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 600.0f, 0.0f);
+
+	// Enable replication
+	bReplicates = true;
+	SetReplicateMovement(true);
 }
 
 void AShooterCharacter::BeginPlay()
@@ -61,6 +66,12 @@ void AShooterCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 
 float AShooterCharacter::TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
+	// Only process damage on server
+	if (!HasAuthority())
+	{
+		return 0.0f;
+	}
+
 	// ignore if already dead
 	if (CurrentHP <= 0.0f)
 	{
@@ -76,7 +87,7 @@ float AShooterCharacter::TakeDamage(float Damage, struct FDamageEvent const& Dam
 		Die();
 	}
 
-	// update the HUD
+	// update the HUD (will also be called via OnRep_CurrentHP on clients)
 	OnDamaged.Broadcast(FMath::Max(0.0f, CurrentHP / MaxHP));
 
 	return Damage;
@@ -84,20 +95,26 @@ float AShooterCharacter::TakeDamage(float Damage, struct FDamageEvent const& Dam
 
 void AShooterCharacter::DoStartFiring()
 {
-	// fire the current weapon
+	// Fire locally for immediate feedback
 	if (CurrentWeapon)
 	{
 		CurrentWeapon->StartFiring();
 	}
+	
+	// Server RPC for firing (always call, it will validate on server)
+	ServerStartFiring();
 }
 
 void AShooterCharacter::DoStopFiring()
 {
-	// stop firing the current weapon
+	// Stop firing locally for immediate feedback
 	if (CurrentWeapon)
 	{
 		CurrentWeapon->StopFiring();
 	}
+	
+	// Server RPC for stopping fire (always call, it will validate on server)
+	ServerStopFiring();
 }
 
 void AShooterCharacter::DoSwitchWeapon()
@@ -280,4 +297,46 @@ void AShooterCharacter::OnRespawn()
 {
 	// destroy the character to force the PC to respawn
 	Destroy();
+}
+
+void AShooterCharacter::OnRep_CurrentHP()
+{
+	// update the HUD when HP changes
+	OnDamaged.Broadcast(FMath::Max(0.0f, CurrentHP / MaxHP));
+}
+
+void AShooterCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AShooterCharacter, CurrentHP);
+	DOREPLIFETIME(AShooterCharacter, TeamByte);
+}
+
+void AShooterCharacter::ServerStartFiring_Implementation()
+{
+	// fire the current weapon on server
+	if (CurrentWeapon)
+	{
+		CurrentWeapon->StartFiring();
+	}
+}
+
+bool AShooterCharacter::ServerStartFiring_Validate()
+{
+	return true;
+}
+
+void AShooterCharacter::ServerStopFiring_Implementation()
+{
+	// stop firing the current weapon on server
+	if (CurrentWeapon)
+	{
+		CurrentWeapon->StopFiring();
+	}
+}
+
+bool AShooterCharacter::ServerStopFiring_Validate()
+{
+	return true;
 }

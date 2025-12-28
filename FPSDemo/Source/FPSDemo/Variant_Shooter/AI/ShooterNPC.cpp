@@ -11,10 +11,15 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "TimerManager.h"
+#include "Net/UnrealNetwork.h"
 
 void AShooterNPC::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Enable replication
+	bReplicates = true;
+	SetReplicateMovement(true);
 
 	// spawn the weapon
 	FActorSpawnParameters SpawnParams;
@@ -35,6 +40,12 @@ void AShooterNPC::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 float AShooterNPC::TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
+	// Only process damage on server
+	if (!HasAuthority())
+	{
+		return 0.0f;
+	}
+
 	// ignore if already dead
 	if (bIsDead)
 	{
@@ -205,4 +216,19 @@ void AShooterNPC::StopShooting()
 
 	// signal the weapon
 	Weapon->StopFiring();
+}
+
+void AShooterNPC::OnRep_CurrentHP()
+{
+	// Update visual effects or UI when HP changes on clients
+	// This can be extended to show damage indicators, etc.
+}
+
+void AShooterNPC::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AShooterNPC, CurrentHP);
+	DOREPLIFETIME(AShooterNPC, TeamByte);
+	DOREPLIFETIME(AShooterNPC, bIsDead);
 }

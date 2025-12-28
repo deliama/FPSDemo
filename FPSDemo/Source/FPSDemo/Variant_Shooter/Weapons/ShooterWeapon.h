@@ -25,6 +25,11 @@ class FPSDEMO_API AShooterWeapon : public AActor
 {
 	GENERATED_BODY()
 	
+public:
+
+	/** Constructor */
+	AShooterWeapon();
+	
 	/** First person perspective mesh */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	USkeletalMeshComponent* FirstPersonMesh;
@@ -47,6 +52,7 @@ protected:
 	int32 MagazineSize = 10;
 
 	/** Number of bullets in the current magazine */
+	UPROPERTY(ReplicatedUsing=OnRep_CurrentBullets)
 	int32 CurrentBullets = 0;
 	
 	/** Animation montage to play when firing this weapon */
@@ -112,7 +118,7 @@ protected:
 public:	
 
 	/** Constructor */
-	AShooterWeapon();
+	//AShooterWeapon();
 
 protected:
 	
@@ -177,4 +183,13 @@ public:
 
 	/** Returns the current bullet count */
 	int32 GetBulletCount() const { return CurrentBullets; }
+
+protected:
+
+	/** Replication function for CurrentBullets */
+	UFUNCTION()
+	void OnRep_CurrentBullets();
+
+	/** Get the lifetime replicated props */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };

@@ -56,10 +56,11 @@ protected:
 	float MaxHP = 500.0f;
 
 	/** Current HP remaining to this character */
+	UPROPERTY(ReplicatedUsing=OnRep_CurrentHP, BlueprintReadOnly, Category="Health")
 	float CurrentHP = 0.0f;
 
 	/** Team ID for this character*/
-	UPROPERTY(EditAnywhere, Category="Team")
+	UPROPERTY(EditAnywhere, Replicated, Category="Team")
 	uint8 TeamByte = 0;
 
 	/** List of weapons picked up by the character */
@@ -116,6 +117,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoSwitchWeapon();
 
+	/** Server RPC for starting fire */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerStartFiring();
+
+	/** Server RPC for stopping fire */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerStopFiring();
+
 public:
 
 	//~Begin IShooterWeaponHolder interface
@@ -163,4 +172,13 @@ protected:
 
 	/** Called from the respawn timer to destroy this character and force the PC to respawn */
 	void OnRespawn();
+
+	/** Replication function for CurrentHP */
+	UFUNCTION()
+	void OnRep_CurrentHP();
+
+public:
+
+	/** Get the lifetime replicated props */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };

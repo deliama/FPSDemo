@@ -24,7 +24,7 @@ class FPSDEMO_API AShooterNPC : public AFPSDemoCharacter, public IShooterWeaponH
 public:
 
 	/** Current HP for this character. It dies if it reaches zero through damage */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Damage")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_CurrentHP, Category="Damage")
 	float CurrentHP = 100.0f;
 
 protected:
@@ -38,7 +38,7 @@ protected:
 	float DeferredDestructionTime = 5.0f;
 
 	/** Team byte for this character */
-	UPROPERTY(EditAnywhere, Category="Team")
+	UPROPERTY(EditAnywhere, Replicated, Category="Team")
 	uint8 TeamByte = 1;
 
 	/** Pointer to the equipped weapon */
@@ -79,6 +79,7 @@ protected:
 	bool bIsShooting = false;
 
 	/** If true, this character has already died */
+	UPROPERTY(Replicated)
 	bool bIsDead = false;
 
 	/** Deferred destruction on death timer */
@@ -143,6 +144,10 @@ protected:
 	/** Called after death to destroy the actor */
 	void DeferredDestruction();
 
+	/** Replication function for CurrentHP */
+	UFUNCTION()
+	void OnRep_CurrentHP();
+
 public:
 
 	/** Signals this character to start shooting at the passed actor */
@@ -150,4 +155,7 @@ public:
 
 	/** Signals this character to stop shooting */
 	void StopShooting();
+
+	/** Get the lifetime replicated props */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };

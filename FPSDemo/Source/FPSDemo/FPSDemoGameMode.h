@@ -16,6 +16,10 @@ class AFPSDemoGameMode : public AGameModeBase
 
 public:
 	AFPSDemoGameMode();
+	
+protected:
+	/** Gameplay initialization */
+	virtual void BeginPlay() override;
 };
 
 
