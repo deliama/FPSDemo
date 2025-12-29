@@ -45,6 +45,8 @@ PBGet/*-*
 /.vscode
 /*.code-workspace
 
+/.cursor
+
 # User-specific files
 *.suo
 *.user

@@ -4,9 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "ShooterTypes.h"
+#include "ShooterUI.h"  // Needed for ShooterUI
 #include "ShooterGameMode.generated.h"
 
-class UShooterUI;
+class APlayerController;
+
+
 
 /** Structure to hold team score data */
 USTRUCT()
@@ -42,7 +46,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Shooter")
 	TSubclassOf<UShooterUI> ShooterUIClass;
 
+public:
+
 	/** Pointer to the UI widget */
+	UPROPERTY()
 	TObjectPtr<UShooterUI> ShooterUI;
 
 	/** Array of team scores */
@@ -68,6 +75,24 @@ protected:
 	UPROPERTY(Replicated, BlueprintReadOnly)
 	uint8 WinningTeam = 255;
 
+	/** Game time limit in seconds (0 = no time limit) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Shooter", meta = (ClampMin = 0, Units = "s"))
+	float GameTimeLimit = 300.0f;
+
+	/** Remaining game time in seconds */
+	UPROPERTY(ReplicatedUsing=OnRep_RemainingTime, BlueprintReadOnly)
+	float RemainingTime = 0.0f;
+
+	/** Time when the game started */
+	float GameStartTime = 0.0f;
+
+	/** Timer handle for updating remaining time */
+	FTimerHandle TimeUpdateTimer;
+
+	/** Array of player statistics */
+	UPROPERTY(ReplicatedUsing=OnRep_PlayerStats)
+	TArray<FPlayerStats> PlayerStatsArray;
+
 protected:
 
 	/** Gameplay initialization */
@@ -77,14 +102,44 @@ protected:
 	UFUNCTION()
 	void OnRep_TeamScores();
 
+	/** Replication function for RemainingTime */
+	UFUNCTION()
+	void OnRep_RemainingTime();
+
+	/** Replication function for PlayerStatsMap */
+	UFUNCTION()
+	void OnRep_PlayerStats();
+
+	/** Updates the remaining game time */
+	void UpdateRemainingTime();
+
+	/** Checks if time limit has been reached */
+	void CheckTimeLimit();
+
 public:
 
 	/** Increases the score for the given team */
 	UFUNCTION(BlueprintCallable)
 	void IncrementTeamScore(uint8 TeamByte);
 
+	/** Records a kill for the given player controller */
+	UFUNCTION(BlueprintCallable)
+	void RecordKill(APlayerController* KillerController);
+
+	/** Records a death for the given player controller */
+	UFUNCTION(BlueprintCallable)
+	void RecordDeath(APlayerController* VictimController);
+
+	/** Gets player statistics for the given controller */
+	UFUNCTION(BlueprintPure, Category="Shooter")
+	FPlayerStats GetPlayerStats(APlayerController* PlayerController) const;
+
 	/** Checks if a team has won and handles victory */
 	void CheckVictoryCondition();
+
+	/** Returns the remaining game time */
+	UFUNCTION(BlueprintPure, Category="Shooter")
+	float GetRemainingTime() const { return RemainingTime; }
 
 	/** Called when a team wins */
 	UFUNCTION(BlueprintImplementableEvent, Category="Shooter", meta = (DisplayName = "On Team Victory"))

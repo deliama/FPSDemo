@@ -6,6 +6,7 @@
 #include "AIController.h"
 #include "ShooterAIController.generated.h"
 
+class AShooterNPC;  // Forward declaration
 class UStateTreeAIComponent;
 class UAIPerceptionComponent;
 struct FAIStimulus;
@@ -72,6 +73,10 @@ public:
 
 	/** Returns the targeted enemy */
 	AActor* GetCurrentTarget() const { return TargetEnemy; };
+
+	/** Called by a respawned NPC to request repossessing */
+	UFUNCTION(BlueprintCallable, Category="AI")
+	void RequestRepossess(AShooterNPC* NPC);
 
 protected:
 

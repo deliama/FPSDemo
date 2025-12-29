@@ -8,6 +8,7 @@
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 #include "Engine/Engine.h"
+#include "GameFramework/PlayerController.h"
 
 void AShooterGameMode::BeginPlay()
 {
@@ -16,18 +17,23 @@ void AShooterGameMode::BeginPlay()
 	// Initialize replicated scores
 	TeamScores.Empty();
 
-	// Create UI for the first player (others will create their own via PlayerController)
-	if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+	// Initialize player stats
+	PlayerStatsArray.Empty();
+
+	// Initialize game time
+	if (HasAuthority())
 	{
-		if (ShooterUIClass)
+		GameStartTime = GetWorld()->GetTimeSeconds();
+		RemainingTime = GameTimeLimit;
+
+		// Start timer to update remaining time (update every second)
+		if (GameTimeLimit > 0.0f)
 		{
-			ShooterUI = CreateWidget<UShooterUI>(PC, ShooterUIClass);
-			if (ShooterUI)
-			{
-				ShooterUI->AddToViewport(0);
-			}
+			GetWorld()->GetTimerManager().SetTimer(TimeUpdateTimer, this, &AShooterGameMode::UpdateRemainingTime, 1.0f, true);
 		}
 	}
+
+
 }
 
 void AShooterGameMode::IncrementTeamScore(uint8 TeamByte)
@@ -74,6 +80,19 @@ void AShooterGameMode::IncrementTeamScore(uint8 TeamByte)
 
 	// update the UI for all players (scores will be replicated)
 	// UI updates will happen via OnRep_TeamScores on clients
+	// Check if UI exists, if not create it
+	if (!ShooterUI && ShooterUIClass)
+	{
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+		{
+			ShooterUI = CreateWidget<UShooterUI>(PC, ShooterUIClass);
+			if (ShooterUI)
+			{
+				ShooterUI->AddToViewport(0);
+			}
+		}
+	}
+	
 	if (ShooterUI)
 	{
 		ShooterUI->BP_UpdateScore(TeamByte, Score);
@@ -91,23 +110,143 @@ void AShooterGameMode::CheckVictoryCondition()
 		return;
 	}
 
+	// Don't check if game has already ended
+	if (bGameEnded)
+	{
+		return;
+	}
+
+	// Check time limit first
+	CheckTimeLimit();
+	if (bGameEnded)
+	{
+		return;
+	}
+
 	// Check each team's score
 	for (const FTeamScoreData& ScoreData : TeamScores)
 	{
 		if (ScoreData.Score >= TargetScore)
 		{
-			// A team has won!
-			bGameEnded = true;
-			WinningTeam = ScoreData.TeamID;
+		// A team has won!
+		bGameEnded = true;
+		WinningTeam = ScoreData.TeamID;
 
-			// Notify Blueprint
-			BP_OnTeamVictory(ScoreData.TeamID);
+		// Show victory screen
+		// Check if UI exists, if not create it
+		if (!ShooterUI && ShooterUIClass)
+		{
+			if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+			{
+				ShooterUI = CreateWidget<UShooterUI>(PC, ShooterUIClass);
+				if (ShooterUI)
+				{
+					ShooterUI->AddToViewport(0);
+				}
+			}
+		}
+		
+		if (ShooterUI)
+		{
+			ShooterUI->BP_ShowVictoryScreen(ScoreData.TeamID, PlayerStatsArray);
+		}
 
-			// Schedule game restart
-			GetWorld()->GetTimerManager().SetTimer(VictoryRestartTimer, this, &AShooterGameMode::RestartGameAfterVictory, VictoryRestartDelay, false);
+		// Notify Blueprint
+		BP_OnTeamVictory(ScoreData.TeamID);
+
+		// Schedule game restart
+		GetWorld()->GetTimerManager().SetTimer(VictoryRestartTimer, this, &AShooterGameMode::RestartGameAfterVictory, VictoryRestartDelay, false);
 
 			break;
 		}
+	}
+}
+
+void AShooterGameMode::UpdateRemainingTime()
+{
+	// Only update on server
+	if (!HasAuthority() || bGameEnded)
+	{
+		return;
+	}
+
+	// Calculate remaining time
+	const float ElapsedTime = GetWorld()->GetTimeSeconds() - GameStartTime;
+	RemainingTime = FMath::Max(0.0f, GameTimeLimit - ElapsedTime);
+
+	// Check if time has run out
+	if (RemainingTime <= 0.0f)
+	{
+		CheckTimeLimit();
+	}
+}
+
+void AShooterGameMode::CheckTimeLimit()
+{
+	// Only check on server
+	if (!HasAuthority() || bGameEnded)
+	{
+		return;
+	}
+
+	// Only check if time limit is enabled
+	if (GameTimeLimit <= 0.0f)
+	{
+		return;
+	}
+
+	// Check if time has run out
+	if (RemainingTime <= 0.0f)
+	{
+		// Time's up! Determine winner by score
+		bGameEnded = true;
+
+		// Find team with highest score
+		int32 HighestScore = -1;
+		uint8 WinningTeamID = 255;
+
+		for (const FTeamScoreData& ScoreData : TeamScores)
+		{
+			if (ScoreData.Score > HighestScore)
+			{
+				HighestScore = ScoreData.Score;
+				WinningTeamID = ScoreData.TeamID;
+			}
+		}
+
+		// If there's a tie, no winner (or could use other tie-breaker logic)
+		if (HighestScore >= 0)
+		{
+			WinningTeam = WinningTeamID;
+		}
+
+		// Show victory screen
+		// Check if UI exists, if not create it
+		if (!ShooterUI && ShooterUIClass)
+		{
+			if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+			{
+				ShooterUI = CreateWidget<UShooterUI>(PC, ShooterUIClass);
+				if (ShooterUI)
+				{
+					ShooterUI->AddToViewport(0);
+				}
+			}
+		}
+		
+		if (ShooterUI)
+		{
+			ShooterUI->BP_ShowVictoryScreen(WinningTeam, PlayerStatsArray);
+		}
+
+		// Notify Blueprint
+		BP_OnTeamVictory(WinningTeam);
+
+		// Schedule game restart
+		GetWorld()->GetTimerManager().SetTimer(VictoryRestartTimer, this, &AShooterGameMode::RestartGameAfterVictory, VictoryRestartDelay, false);
+
+		// Clear time update timer
+		GetWorld()->GetTimerManager().ClearTimer(TimeUpdateTimer);
 	}
 }
 
@@ -117,6 +256,9 @@ void AShooterGameMode::RestartGameAfterVictory()
 	bGameEnded = false;
 	WinningTeam = 255;
 	TeamScores.Empty();
+
+	// Clear time update timer
+	GetWorld()->GetTimerManager().ClearTimer(TimeUpdateTimer);
 
 	// Restart the game by traveling to the same map
 	// This will reset all actors and respawn players
@@ -132,6 +274,19 @@ void AShooterGameMode::RestartGameAfterVictory()
 void AShooterGameMode::OnRep_TeamScores()
 {
 	// Update UI when scores are replicated
+	// Check if UI exists, if not create it
+	if (!ShooterUI && ShooterUIClass)
+	{
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+		{
+			ShooterUI = CreateWidget<UShooterUI>(PC, ShooterUIClass);
+			if (ShooterUI)
+			{
+				ShooterUI->AddToViewport(0);
+			}
+		}
+	}
+	
 	for (const FTeamScoreData& ScoreData : TeamScores)
 	{
 		if (ShooterUI)
@@ -141,6 +296,109 @@ void AShooterGameMode::OnRep_TeamScores()
 	}
 }
 
+void AShooterGameMode::OnRep_RemainingTime()
+{
+	// Update UI when remaining time changes
+	// This can be used in Blueprint to update time display
+	// Check if UI exists, if not create it
+	if (!ShooterUI && ShooterUIClass)
+	{
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0))
+		{
+			ShooterUI = CreateWidget<UShooterUI>(PC, ShooterUIClass);
+			if (ShooterUI)
+			{
+				ShooterUI->AddToViewport(0);
+			}
+		}
+	}
+	
+	if (ShooterUI)
+	{
+		ShooterUI->BP_UpdateRemainingTime(RemainingTime);
+	}
+}
+
+void AShooterGameMode::RecordKill(APlayerController* KillerController)
+{
+	// Only process on server
+	if (!HasAuthority() || !KillerController)
+	{
+		return;
+	}
+
+	// Find or create stats entry
+	int32 StatsIndex = INDEX_NONE;
+	for (int32 i = 0; i < PlayerStatsArray.Num(); ++i)
+	{
+		if (PlayerStatsArray[i].PlayerController == KillerController)
+		{
+			StatsIndex = i;
+			break;
+		}
+	}
+
+	if (StatsIndex != INDEX_NONE)
+	{
+		PlayerStatsArray[StatsIndex].Kills++;
+	}
+	else
+	{
+		FPlayerStats NewStats(KillerController);
+		NewStats.Kills = 1;
+		PlayerStatsArray.Add(NewStats);
+	}
+}
+
+void AShooterGameMode::RecordDeath(APlayerController* VictimController)
+{
+	// Only process on server
+	if (!HasAuthority() || !VictimController)
+	{
+		return;
+	}
+
+	// Find or create stats entry
+	int32 StatsIndex = INDEX_NONE;
+	for (int32 i = 0; i < PlayerStatsArray.Num(); ++i)
+	{
+		if (PlayerStatsArray[i].PlayerController == VictimController)
+		{
+			StatsIndex = i;
+			break;
+		}
+	}
+
+	if (StatsIndex != INDEX_NONE)
+	{
+		PlayerStatsArray[StatsIndex].Deaths++;
+	}
+	else
+	{
+		FPlayerStats NewStats(VictimController);
+		NewStats.Deaths = 1;
+		PlayerStatsArray.Add(NewStats);
+	}
+}
+
+FPlayerStats AShooterGameMode::GetPlayerStats(APlayerController* PlayerController) const
+{
+	for (const FPlayerStats& Stats : PlayerStatsArray)
+	{
+		if (Stats.PlayerController == PlayerController)
+		{
+			return Stats;
+		}
+	}
+	return FPlayerStats();
+}
+
+void AShooterGameMode::OnRep_PlayerStats()
+{
+	// Update UI when player stats change
+	// This can be used in Blueprint to update statistics display
+}
+
 void AShooterGameMode::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -148,4 +406,6 @@ void AShooterGameMode::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME(AShooterGameMode, TeamScores);
 	DOREPLIFETIME(AShooterGameMode, bGameEnded);
 	DOREPLIFETIME(AShooterGameMode, WinningTeam);
+	DOREPLIFETIME(AShooterGameMode, RemainingTime);
+	DOREPLIFETIME(AShooterGameMode, PlayerStatsArray);
 }

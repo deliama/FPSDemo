@@ -31,8 +31,11 @@ void AShooterAIController::OnPossess(APawn* InPawn)
 		// add the team tag to the pawn
 		NPC->Tags.Add(TeamTag);
 
-		// subscribe to the pawn's OnDeath delegate
-		NPC->OnPawnDeath.AddDynamic(this, &AShooterAIController::OnPawnDeath);
+		// subscribe to the pawn's OnDeath delegate if not already subscribed
+		if (!NPC->OnPawnDeath.IsAlreadyBound(this, &AShooterAIController::OnPawnDeath))
+		{
+			NPC->OnPawnDeath.AddDynamic(this, &AShooterAIController::OnPawnDeath);
+		}
 	}
 }
 
@@ -47,6 +50,17 @@ void AShooterAIController::OnPawnDeath()
 	// unpossess the pawn
 	UnPossess();
 
+	// Check if the pawn can respawn
+	if (AShooterNPC* NPC = Cast<AShooterNPC>(GetPawn()))
+	{
+		// If the NPC can respawn, keep the controller alive
+		if (NPC->bCanRespawn && NPC->RespawnTime > 0.0f)
+		{
+			// Controller stays alive to possess the respawned NPC
+			return;
+		}
+	}
+
 	// destroy this controller
 	Destroy();
 }
@@ -59,6 +73,15 @@ void AShooterAIController::SetCurrentTarget(AActor* Target)
 void AShooterAIController::ClearCurrentTarget()
 {
 	TargetEnemy = nullptr;
+}
+
+void AShooterAIController::RequestRepossess(AShooterNPC* NPC)
+{
+	// Repossess the respawned NPC if we don't currently have a pawn
+	if (!GetPawn() || !IsValid(GetPawn()))
+	{
+		Possess(NPC);
+	}
 }
 
 void AShooterAIController::OnPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)

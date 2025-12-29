@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "FPSDemoCharacter.h"
 #include "ShooterWeaponHolder.h"
+#include "ShooterTypes.h"
 #include "ShooterCharacter.generated.h"
 
 class AShooterWeapon;
@@ -38,6 +39,10 @@ protected:
 	/** Switch weapon input action */
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* SwitchWeaponAction;
+
+	/** Reload weapon input action */
+	UPROPERTY(EditAnywhere, Category ="Input")
+	UInputAction* ReloadAction;
 
 	/** Name of the first person mesh weapon socket */
 	UPROPERTY(EditAnywhere, Category ="Weapons")
@@ -73,6 +78,20 @@ protected:
 	float RespawnTime = 5.0f;
 
 	FTimerHandle RespawnTimer;
+
+	/** Duration of invulnerability after respawn (in seconds) */
+	UPROPERTY(EditAnywhere, Category="Health", meta = (ClampMin = 0, ClampMax = 10, Units = "s"))
+	float InvulnerabilityDuration = 3.0f;
+
+	/** If true, this character is currently invulnerable */
+	UPROPERTY(ReplicatedUsing=OnRep_IsInvulnerable, BlueprintReadOnly, Category="Health")
+	bool bIsInvulnerable = false;
+
+	/** Timer handle for invulnerability */
+	FTimerHandle InvulnerabilityTimer;
+
+	/** Controller that last damaged this character (for kill tracking) */
+	TObjectPtr<AController> LastDamageInstigator;
 
 public:
 
@@ -117,6 +136,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoSwitchWeapon();
 
+	/** Handles reload input */
+	UFUNCTION(BlueprintCallable, Category="Input")
+	void DoReload();
+
 	/** Server RPC for starting fire */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerStartFiring();
@@ -124,6 +147,10 @@ public:
 	/** Server RPC for stopping fire */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerStopFiring();
+
+	/** Server RPC for reloading */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerReload();
 
 public:
 
@@ -176,6 +203,13 @@ protected:
 	/** Replication function for CurrentHP */
 	UFUNCTION()
 	void OnRep_CurrentHP();
+
+	/** Replication function for bIsInvulnerable */
+	UFUNCTION()
+	void OnRep_IsInvulnerable();
+
+	/** Called when invulnerability expires */
+	void OnInvulnerabilityExpired();
 
 public:
 

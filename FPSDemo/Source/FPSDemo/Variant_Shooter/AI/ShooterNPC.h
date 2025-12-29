@@ -26,6 +26,14 @@ public:
 	/** Current HP for this character. It dies if it reaches zero through damage */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_CurrentHP, Category="Damage")
 	float CurrentHP = 100.0f;
+	
+	/** If true, this NPC will respawn after death */
+	UPROPERTY(EditAnywhere, Category="Respawn")
+	bool bCanRespawn = false;
+
+	/** Time to wait before respawning this NPC (0 means no respawn) */
+	UPROPERTY(EditAnywhere, Category="Respawn")
+	float RespawnTime = 0.0f; // Default to 0 (no respawn) to maintain current behavior
 
 protected:
 
@@ -84,6 +92,12 @@ protected:
 
 	/** Deferred destruction on death timer */
 	FTimerHandle DeathTimer;
+
+	/** Timer handle for respawn */
+	FTimerHandle RespawnTimer;
+
+	/** Controller that last damaged this NPC (for kill tracking) */
+	TObjectPtr<AController> LastDamageInstigator;
 
 public:
 
@@ -155,6 +169,12 @@ public:
 
 	/** Signals this character to stop shooting */
 	void StopShooting();
+
+	/** Respawn this NPC */
+	void Respawn();
+
+	/** Called after respawn to notify the AI controller */
+	void OnAfterRespawn();
 
 	/** Get the lifetime replicated props */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

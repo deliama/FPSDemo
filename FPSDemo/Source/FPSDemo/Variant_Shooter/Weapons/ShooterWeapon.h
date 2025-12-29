@@ -54,6 +54,14 @@ protected:
 	/** Number of bullets in the current magazine */
 	UPROPERTY(ReplicatedUsing=OnRep_CurrentBullets)
 	int32 CurrentBullets = 0;
+
+	/** Time it takes to reload this weapon (in seconds) */
+	UPROPERTY(EditAnywhere, Category="Ammo", meta = (ClampMin = 0, ClampMax = 10, Units = "s"))
+	float ReloadTime = 2.0f;
+
+	/** Animation montage to play when reloading this weapon */
+	UPROPERTY(EditAnywhere, Category="Animation")
+	UAnimMontage* ReloadMontage;
 	
 	/** Animation montage to play when firing this weapon */
 	UPROPERTY(EditAnywhere, Category="Animation")
@@ -97,8 +105,15 @@ protected:
 	/** If true, the weapon is currently firing */
 	bool bIsFiring = false;
 
+	/** If true, the weapon is currently reloading */
+	UPROPERTY(ReplicatedUsing=OnRep_IsReloading)
+	bool bIsReloading = false;
+
 	/** Timer to handle full auto refiring */
 	FTimerHandle RefireTimer;
+
+	/** Timer to handle reload completion */
+	FTimerHandle ReloadTimer;
 
 	/** Cast pawn pointer to the owner for AI perception system interactions */
 	TObjectPtr<APawn> PawnOwner;
@@ -148,6 +163,18 @@ public:
 	/** Stop firing this weapon */
 	void StopFiring();
 
+	/** Start reloading this weapon */
+	void StartReload();
+
+	/** Stop reloading this weapon (called when reload is interrupted) */
+	void StopReload();
+
+	/** Returns true if the weapon can be reloaded */
+	bool CanReload() const;
+
+	/** Returns true if the weapon is currently reloading */
+	bool IsReloading() const { return bIsReloading; }
+
 protected:
 
 	/** Fire the weapon */
@@ -155,6 +182,9 @@ protected:
 
 	/** Called when the refire rate time has passed while shooting semi auto weapons */
 	void FireCooldownExpired();
+
+	/** Called when the reload time has passed */
+	void ReloadComplete();
 
 	/** Fire a projectile towards the target location */
 	virtual void FireProjectile(const FVector& TargetLocation);
@@ -189,6 +219,10 @@ protected:
 	/** Replication function for CurrentBullets */
 	UFUNCTION()
 	void OnRep_CurrentBullets();
+
+	/** Replication function for bIsReloading */
+	UFUNCTION()
+	void OnRep_IsReloading();
 
 	/** Get the lifetime replicated props */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

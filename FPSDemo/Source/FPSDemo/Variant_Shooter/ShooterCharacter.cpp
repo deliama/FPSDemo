@@ -12,7 +12,9 @@
 #include "Camera/CameraComponent.h"
 #include "TimerManager.h"
 #include "ShooterGameMode.h"
+#include "ShooterUI.h"
 #include "Net/UnrealNetwork.h"
+#include "GameFramework/PlayerState.h"
 
 AShooterCharacter::AShooterCharacter()
 {
@@ -34,6 +36,13 @@ void AShooterCharacter::BeginPlay()
 	// reset HP to max
 	CurrentHP = MaxHP;
 
+	// Start invulnerability period after spawn
+	if (HasAuthority())
+	{
+		bIsInvulnerable = true;
+		GetWorld()->GetTimerManager().SetTimer(InvulnerabilityTimer, this, &AShooterCharacter::OnInvulnerabilityExpired, InvulnerabilityDuration, false);
+	}
+
 	// update the HUD
 	OnDamaged.Broadcast(1.0f);
 }
@@ -44,6 +53,9 @@ void AShooterCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
 
 	// clear the respawn timer
 	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
+
+	// clear the invulnerability timer
+	GetWorld()->GetTimerManager().ClearTimer(InvulnerabilityTimer);
 }
 
 void AShooterCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -60,6 +72,9 @@ void AShooterCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 
 		// Switch weapon
 		EnhancedInputComponent->BindAction(SwitchWeaponAction, ETriggerEvent::Triggered, this, &AShooterCharacter::DoSwitchWeapon);
+
+		// Reload
+		EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Triggered, this, &AShooterCharacter::DoReload);
 	}
 
 }
@@ -76,6 +91,18 @@ float AShooterCharacter::TakeDamage(float Damage, struct FDamageEvent const& Dam
 	if (CurrentHP <= 0.0f)
 	{
 		return 0.0f;
+	}
+
+	// ignore damage if invulnerable
+	if (bIsInvulnerable)
+	{
+		return 0.0f;
+	}
+
+	// Store the instigator for kill tracking
+	if (EventInstigator)
+	{
+		LastDamageInstigator = EventInstigator;
 	}
 
 	// Reduce HP
@@ -145,6 +172,18 @@ void AShooterCharacter::DoSwitchWeapon()
 		// activate the new weapon
 		CurrentWeapon->ActivateWeapon();
 	}
+}
+
+void AShooterCharacter::DoReload()
+{
+	// Try to reload locally for immediate feedback (will be validated on server)
+	if (CurrentWeapon && CurrentWeapon->CanReload())
+	{
+		CurrentWeapon->StartReload();
+	}
+
+	// Server RPC for reloading
+	ServerReload();
 }
 
 void AShooterCharacter::AttachWeaponMeshes(AShooterWeapon* Weapon)
@@ -271,9 +310,45 @@ void AShooterCharacter::Die()
 		CurrentWeapon->DeactivateWeapon();
 	}
 
-	// increment the team score
+	// Record statistics and update UI
 	if (AShooterGameMode* GM = Cast<AShooterGameMode>(GetWorld()->GetAuthGameMode()))
 	{
+		APlayerController* VictimPC = Cast<APlayerController>(GetController());
+		APlayerController* KillerPC = nullptr;
+
+		// Record death for this player
+		if (VictimPC)
+		{
+			GM->RecordDeath(VictimPC);
+		}
+
+		// Record kill for the killer
+		if (LastDamageInstigator)
+		{
+			KillerPC = Cast<APlayerController>(LastDamageInstigator);
+			if (KillerPC)
+			{
+				GM->RecordKill(KillerPC);
+			}
+		}
+
+		// Show kill feed and death screen
+		if (GM && GM->ShooterUI)
+		{
+			FString KillerName = KillerPC ? KillerPC->GetPlayerState<APlayerState>()->GetPlayerName() : TEXT("Unknown");
+			FString VictimName = VictimPC ? VictimPC->GetPlayerState<APlayerState>()->GetPlayerName() : TEXT("Unknown");
+
+			// Show kill feed for all players
+			GM->ShooterUI->BP_ShowKillFeed(KillerName, VictimName);
+
+			// Show death screen for the victim
+			if (VictimPC && VictimPC->IsLocalController())
+			{
+				GM->ShooterUI->BP_ShowDeathScreen(KillerName, RespawnTime);
+			}
+		}
+
+		// increment the team score
 		GM->IncrementTeamScore(TeamByte);
 	}
 		
@@ -295,8 +370,41 @@ void AShooterCharacter::Die()
 
 void AShooterCharacter::OnRespawn()
 {
+	// Hide death screen before respawning
+	if (AShooterGameMode* GM = Cast<AShooterGameMode>(GetWorld()->GetAuthGameMode()))
+	{
+		if (GM && GM->ShooterUI)
+		{
+			if (APlayerController* PC = Cast<APlayerController>(GetController()))
+			{
+				if (PC->IsLocalController())
+				{
+					GM->ShooterUI->BP_HideDeathScreen();
+				}
+			}
+		}
+	}
+
 	// destroy the character to force the PC to respawn
 	Destroy();
+}
+
+void AShooterCharacter::OnInvulnerabilityExpired()
+{
+	// Only process on server
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// Clear invulnerability flag
+	bIsInvulnerable = false;
+}
+
+void AShooterCharacter::OnRep_IsInvulnerable()
+{
+	// Update visual feedback when invulnerability state changes
+	// This can be used in Blueprint to show invulnerability effects (e.g., flashing)
 }
 
 void AShooterCharacter::OnRep_CurrentHP()
@@ -311,6 +419,7 @@ void AShooterCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 
 	DOREPLIFETIME(AShooterCharacter, CurrentHP);
 	DOREPLIFETIME(AShooterCharacter, TeamByte);
+	DOREPLIFETIME(AShooterCharacter, bIsInvulnerable);
 }
 
 void AShooterCharacter::ServerStartFiring_Implementation()
@@ -337,6 +446,20 @@ void AShooterCharacter::ServerStopFiring_Implementation()
 }
 
 bool AShooterCharacter::ServerStopFiring_Validate()
+{
+	return true;
+}
+
+void AShooterCharacter::ServerReload_Implementation()
+{
+	// Reload the current weapon on server
+	if (CurrentWeapon && CurrentWeapon->CanReload())
+	{
+		CurrentWeapon->StartReload();
+	}
+}
+
+bool AShooterCharacter::ServerReload_Validate()
 {
 	return true;
 }

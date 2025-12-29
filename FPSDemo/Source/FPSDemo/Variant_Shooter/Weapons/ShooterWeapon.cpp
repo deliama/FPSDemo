@@ -65,6 +65,9 @@ void AShooterWeapon::EndPlay(EEndPlayReason::Type EndPlayReason)
 
 	// clear the refire timer
 	GetWorld()->GetTimerManager().ClearTimer(RefireTimer);
+	
+	// clear the reload timer
+	GetWorld()->GetTimerManager().ClearTimer(ReloadTimer);
 }
 
 void AShooterWeapon::OnOwnerDestroyed(AActor* DestroyedActor)
@@ -86,6 +89,12 @@ void AShooterWeapon::DeactivateWeapon()
 {
 	// ensure we're no longer firing this weapon while deactivated
 	StopFiring();
+
+	// stop reloading if we're reloading
+	if (bIsReloading)
+	{
+		StopReload();
+	}
 
 	// hide the weapon
 	SetActorHiddenInGame(true);
@@ -128,11 +137,100 @@ void AShooterWeapon::StopFiring()
 	GetWorld()->GetTimerManager().ClearTimer(RefireTimer);
 }
 
+bool AShooterWeapon::CanReload() const
+{
+	// Can reload if not already reloading, has bullets less than magazine size, and is not firing
+	return !bIsReloading && CurrentBullets < MagazineSize && !bIsFiring;
+}
+
+void AShooterWeapon::StartReload()
+{
+	// Only reload on server
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// Check if we can reload
+	if (!CanReload())
+	{
+		return;
+	}
+
+	// Set reloading flag
+	bIsReloading = true;
+
+	// Stop firing if we're firing
+	if (bIsFiring)
+	{
+		StopFiring();
+	}
+
+	// Play reload montage
+	if (WeaponOwner && ReloadMontage)
+	{
+		WeaponOwner->PlayFiringMontage(ReloadMontage);
+	}
+
+	// Schedule reload completion
+	GetWorld()->GetTimerManager().SetTimer(ReloadTimer, this, &AShooterWeapon::ReloadComplete, ReloadTime, false);
+}
+
+void AShooterWeapon::StopReload()
+{
+	// Only stop reload on server
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// Clear reloading flag
+	bIsReloading = false;
+
+	// Clear reload timer
+	GetWorld()->GetTimerManager().ClearTimer(ReloadTimer);
+}
+
+void AShooterWeapon::ReloadComplete()
+{
+	// Only complete reload on server
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// Fill the magazine
+	CurrentBullets = MagazineSize;
+
+	// Clear reloading flag
+	bIsReloading = false;
+
+	// Update the weapon HUD
+	if (WeaponOwner)
+	{
+		WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize);
+	}
+}
+
 void AShooterWeapon::Fire()
 {
 	// ensure the player still wants to fire. They may have let go of the trigger
 	if (!bIsFiring)
 	{
+		return;
+	}
+
+	// Cannot fire while reloading
+	if (bIsReloading)
+	{
+		return;
+	}
+
+	// Check if we have bullets
+	if (CurrentBullets <= 0)
+	{
+		// Stop firing if out of ammo
+		StopFiring();
 		return;
 	}
 	
@@ -193,12 +291,6 @@ void AShooterWeapon::FireProjectile(const FVector& TargetLocation)
 	// consume bullets
 	--CurrentBullets;
 
-	// if the clip is depleted, reload it
-	if (CurrentBullets <= 0)
-	{
-		CurrentBullets = MagazineSize;
-	}
-
 	// update the weapon HUD (will be replicated to clients via OnRep_CurrentBullets)
 	WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize);
 }
@@ -237,9 +329,19 @@ void AShooterWeapon::OnRep_CurrentBullets()
 	}
 }
 
+void AShooterWeapon::OnRep_IsReloading()
+{
+	// Play reload montage on clients if reloading
+	if (bIsReloading && WeaponOwner && ReloadMontage)
+	{
+		WeaponOwner->PlayFiringMontage(ReloadMontage);
+	}
+}
+
 void AShooterWeapon::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AShooterWeapon, CurrentBullets);
+	DOREPLIFETIME(AShooterWeapon, bIsReloading);
 }
