@@ -96,6 +96,10 @@ protected:
 	/** Timer handle for respawn */
 	FTimerHandle RespawnTimer;
 
+	// 保存NPC出生时的Transform
+	UPROPERTY(BlueprintReadOnly,Category="Shooter|AI")
+	FTransform StartTransform;
+
 	/** Controller that last damaged this NPC (for kill tracking) */
 	TObjectPtr<AController> LastDamageInstigator;
 

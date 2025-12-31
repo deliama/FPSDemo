@@ -77,10 +77,23 @@ void AShooterAIController::ClearCurrentTarget()
 
 void AShooterAIController::RequestRepossess(AShooterNPC* NPC)
 {
-	// Repossess the respawned NPC if we don't currently have a pawn
-	if (!GetPawn() || !IsValid(GetPawn()))
+	if(!NPC) return;
+
+	if(GetPawn() != NPC)
 	{
 		Possess(NPC);
+	}else
+	{
+		ClearCurrentTarget();
+		if(StateTreeAI)
+		{
+			StateTreeAI->StopLogic(TEXT("Respawn"));
+			StateTreeAI->StartLogic();
+			UE_LOG(LogTemp, Display, TEXT("StateTreeAI Restarted Successfully"));
+		}else
+		{
+			UE_LOG(LogTemp, Display, TEXT("StateTreeAI Restarted Failed"));
+		}
 	}
 }
 

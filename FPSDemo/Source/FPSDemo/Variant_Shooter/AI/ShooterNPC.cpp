@@ -18,6 +18,9 @@ void AShooterNPC::BeginPlay()
 {
 	Super::BeginPlay();
 
+	//记录NPC出生地点
+	StartTransform = GetActorTransform();
+	
 	// Enable replication
 	bReplicates = true;
 	SetReplicateMovement(true);
@@ -272,6 +275,13 @@ void AShooterNPC::DeferredDestruction()
 
 void AShooterNPC::Respawn()
 {
+	//将NPC传送回出生点
+	FTransform RespawnTransform = StartTransform;
+	FVector StartLocation = RespawnTransform.GetLocation();
+	StartLocation.Z += 10.0f;
+	RespawnTransform.SetLocation(StartLocation);
+	SetActorTransform(RespawnTransform,false,nullptr,ETeleportType::TeleportPhysics);
+	
 	// Reset health
 	CurrentHP = 100.0f; // Or whatever max HP should be
 	bIsDead = false;
@@ -282,12 +292,16 @@ void AShooterNPC::Respawn()
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	
 	// Reset the physics transforms to match the skeletal mesh
+	GetMesh()->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f,0.0f,-90.0f),FRotator(0.0f,0.0f,0.0f));
 	GetMesh()->ResetAllBodiesSimulatePhysics();
 	
 	// Reset movement
 	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
 	GetCharacterMovement()->bUseControllerDesiredRotation = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;
+	GetCharacterMovement()->Velocity = FVector::ZeroVector;
+	GetCharacterMovement()->Activate();
 
 	// If we have a weapon, make sure it's properly attached and activated
 	if (Weapon)
@@ -320,9 +334,16 @@ void AShooterNPC::OnAfterRespawn()
 	// Try to get the AI controller to repossess this pawn
 	if (AController* NPCController = GetController())
 	{
+		if(NPCController->GetPawn() !=  this)
+		{
+			NPCController->Possess(this);
+			UE_LOG(LogTemp, Warning, TEXT("Possessed NPC"));
+		}
 		if (AShooterAIController* AIController = Cast<AShooterAIController>(NPCController))
 		{
+			
 			AIController->RequestRepossess(this);
+			UE_LOG(LogTemp, Warning, TEXT("Repossessed NPC"));
 		}
 	}
 	else
