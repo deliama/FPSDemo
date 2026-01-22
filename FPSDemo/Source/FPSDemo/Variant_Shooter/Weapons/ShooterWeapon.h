@@ -15,10 +15,13 @@ class UAnimMontage;
 class UAnimInstance;
 
 /**
- *  Base class for a simple first person shooter weapon
- *  Provides both first person and third person perspective meshes
- *  Handles ammo and firing logic
- *  Interacts with the weapon owner through the ShooterWeaponHolder interface
+ *  基础武器类
+ *  功能：
+ *  - 提供第一人称和第三人称视角的武器网格
+ *  - 管理弹药系统和射击逻辑
+ *  - 支持全自动/半自动射击模式
+ *  - 通过 IShooterWeaponHolder 接口与武器持有者交互
+ *  - 网络同步弹药状态
  */
 UCLASS(abstract)
 class FPSDEMO_API AShooterWeapon : public AActor
@@ -27,35 +30,35 @@ class FPSDEMO_API AShooterWeapon : public AActor
 	
 public:
 
-	/** Constructor */
+	/** 构造函数 */
 	AShooterWeapon();
 	
-	/** First person perspective mesh */
+	/** 第一人称视角武器网格（玩家自己看到的手持武器模型） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	USkeletalMeshComponent* FirstPersonMesh;
 
-	/** Third person perspective mesh */
+	/** 第三人称视角武器网格（其他玩家看到的武器模型） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	USkeletalMeshComponent* ThirdPersonMesh;
 
 protected:
 
-	/** Cast pointer to the weapon owner */
+	/** 武器持有者接口指针（玩家角色或 AI NPC） */
 	IShooterWeaponHolder* WeaponOwner;
 
-	/** Type of projectiles this weapon will shoot */
+	/** 此武器发射的投射物类型 */
 	UPROPERTY(EditAnywhere, Category="Ammo")
 	TSubclassOf<AShooterProjectile> ProjectileClass;
 
-	/** Number of bullets in a magazine */
+	/** 弹匣容量（每弹匣可装弹药数） */
 	UPROPERTY(EditAnywhere, Category="Ammo", meta = (ClampMin = 0, ClampMax = 100))
 	int32 MagazineSize = 10;
 
-	/** Number of bullets in the current magazine */
+	/** 当前弹匣中的弹药数量（网络同步） */
 	UPROPERTY(ReplicatedUsing=OnRep_CurrentBullets)
 	int32 CurrentBullets = 0;
 
-	/** Time it takes to reload this weapon (in seconds) */
+	/** 换弹所需时间（秒） */
 	UPROPERTY(EditAnywhere, Category="Ammo", meta = (ClampMin = 0, ClampMax = 10, Units = "s"))
 	float ReloadTime = 2.0f;
 
@@ -75,27 +78,27 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Animation")
 	TSubclassOf<UAnimInstance> ThirdPersonAnimInstanceClass;
 
-	/** Cone half-angle for variance while aiming */
+	/** 瞄准散布：射击时的瞄准锥形角度半角（度数，0 = 完全精确） */
 	UPROPERTY(EditAnywhere, Category="Aim", meta = (ClampMin = 0, ClampMax = 90, Units = "Degrees"))
 	float AimVariance = 0.0f;
 
-	/** Amount of firing recoil to apply to the owner */
+	/** 射击后坐力：每次射击时向上施加的视角旋转量 */
 	UPROPERTY(EditAnywhere, Category="Aim", meta = (ClampMin = 0, ClampMax = 100))
 	float FiringRecoil = 0.0f;
 
-	/** Name of the first person muzzle socket where projectiles will spawn */
+	/** 第一人称枪口插槽名称（投射物从此位置生成） */
 	UPROPERTY(EditAnywhere, Category="Aim")
 	FName MuzzleSocketName;
 
-	/** Distance ahead of the muzzle that bullets will spawn at */
+	/** 枪口前方的投射物生成偏移距离（厘米，避免从枪管内部生成） */
 	UPROPERTY(EditAnywhere, Category="Aim", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm"))
 	float MuzzleOffset = 10.0f;
 
-	/** If true, this weapon will automatically fire at the refire rate */
+	/** 是否为全自动武器（true = 按住连射，false = 半自动单发） */
 	UPROPERTY(EditAnywhere, Category="Refire")
 	bool bFullAuto = false;
 
-	/** Time between shots for this weapon. Affects both full auto and semi auto modes */
+	/** 射击间隔时间（秒，影响全自动射速和半自动再次射击的最短时间） */
 	UPROPERTY(EditAnywhere, Category="Refire", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
 	float RefireRate = 0.5f;
 

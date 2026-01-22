@@ -25,8 +25,6 @@ public class FPSDemo : ModuleRules
 
 		PublicIncludePaths.AddRange(new string[] {
 			"FPSDemo",
-			"FPSDemo/Variant_Horror",
-			"FPSDemo/Variant_Horror/UI",
 			"FPSDemo/Variant_Shooter",
 			"FPSDemo/Variant_Shooter/AI",
 			"FPSDemo/Variant_Shooter/UI",

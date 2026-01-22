@@ -41,27 +41,52 @@ void AShooterAIController::OnPossess(APawn* InPawn)
 
 void AShooterAIController::OnPawnDeath()
 {
-	// stop movement
-	GetPathFollowingComponent()->AbortMove(*this, FPathFollowingResultFlags::UserAbort);
-
-	// stop StateTree logic
-	StateTreeAI->StopLogic(FString(""));
-
-	// unpossess the pawn
-	UnPossess();
-
-	// Check if the pawn can respawn
-	if (AShooterNPC* NPC = Cast<AShooterNPC>(GetPawn()))
+	// 获取 Pawn 引用（在 UnPossess 之前）
+	AShooterNPC* NPC = Cast<AShooterNPC>(GetPawn());
+	
+	// 检查 NPC 是否可以重生（在 UnPossess 之前检查）
+	bool bShouldKeepControllerAlive = false;
+	if (NPC && NPC->IsValidLowLevel())
 	{
-		// If the NPC can respawn, keep the controller alive
+		// 如果 NPC 可以重生，保持 Controller 存活
 		if (NPC->bCanRespawn && NPC->RespawnTime > 0.0f)
 		{
-			// Controller stays alive to possess the respawned NPC
-			return;
+			bShouldKeepControllerAlive = true;
 		}
 	}
 
-	// destroy this controller
+	// 停止移动
+	if (GetPathFollowingComponent())
+	{
+		GetPathFollowingComponent()->AbortMove(*this, FPathFollowingResultFlags::UserAbort);
+	}
+
+	// 停止 StateTree 逻辑（这会触发所有状态的 ExitState）
+	if (StateTreeAI)
+	{
+		StateTreeAI->StopLogic(FString("Death"));
+	}
+
+	// 清除目标
+	ClearCurrentTarget();
+
+	// 确保 NPC 停止射击（在 UnPossess 之前）
+	if (NPC && NPC->IsValidLowLevel())
+	{
+		NPC->StopShooting();
+	}
+
+	// 取消占据 Pawn
+	UnPossess();
+
+	// 如果 NPC 可以重生，保持 Controller 存活，等待重生
+	if (bShouldKeepControllerAlive)
+	{
+		// Controller 保持存活，等待 NPC 重生的 RequestRepossess 调用
+		return;
+	}
+
+	// 如果 NPC 不会重生，销毁 Controller
 	Destroy();
 }
 
@@ -75,24 +100,65 @@ void AShooterAIController::ClearCurrentTarget()
 	TargetEnemy = nullptr;
 }
 
+void AShooterAIController::StopAIBehavior(const FString& Reason)
+{
+	// 停止 AI 移动
+	if (GetPathFollowingComponent())
+	{
+		GetPathFollowingComponent()->AbortMove(*this, FPathFollowingResultFlags::UserAbort);
+	}
+
+	// 停止 StateTree 逻辑
+	if (StateTreeAI)
+	{
+		StateTreeAI->StopLogic(Reason.IsEmpty() ? FString("GameEnded") : Reason);
+	}
+
+	// 清除目标
+	ClearCurrentTarget();
+
+	// 停止 NPC 射击（如果有）
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		if (AShooterNPC* NPC = Cast<AShooterNPC>(ControlledPawn))
+		{
+			NPC->StopShooting();
+		}
+	}
+}
+
 void AShooterAIController::RequestRepossess(AShooterNPC* NPC)
 {
 	if(!NPC) return;
 
 	if(GetPawn() != NPC)
 	{
+		// 如果 Controller 还没有占据这个 Pawn，先占据它
 		Possess(NPC);
-	}else
+	}
+	else
 	{
+		// 如果已经占据了这个 Pawn，重置状态并重启 StateTree
+		
+		// 清除当前目标
 		ClearCurrentTarget();
+		
+		// 确保 NPC 停止射击（重要：防止重生后卡在射击状态）
+		if (NPC && NPC->IsValidLowLevel())
+		{
+			NPC->StopShooting();
+		}
+		
+		// 停止并重启 StateTree（这会重置所有 StateTree 状态）
 		if(StateTreeAI)
 		{
 			StateTreeAI->StopLogic(TEXT("Respawn"));
 			StateTreeAI->StartLogic();
 			UE_LOG(LogTemp, Display, TEXT("StateTreeAI Restarted Successfully"));
-		}else
+		}
+		else
 		{
-			UE_LOG(LogTemp, Display, TEXT("StateTreeAI Restarted Failed"));
+			UE_LOG(LogTemp, Warning, TEXT("StateTreeAI is null - cannot restart"));
 		}
 	}
 }

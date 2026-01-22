@@ -12,9 +12,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPawnDeathDelegate);
 class AShooterWeapon;
 
 /**
- *  A simple AI-controlled shooter game NPC
- *  Executes its behavior through a StateTree managed by its AI Controller
- *  Holds and manages a weapon
+ *  AI 控制的射击游戏 NPC 敌人
+ * 功能：
+ *  - 通过 StateTree（状态树）执行 AI 行为（由 AI Controller 管理）
+ *  - 持有武器并可以攻击玩家
+ *  - 生命值系统：可被玩家击败
+ *  - 可选的重生机制
+ *  - 网络同步生命值和状态
  */
 UCLASS(abstract)
 class FPSDEMO_API AShooterNPC : public AFPSDemoCharacter, public IShooterWeaponHolder
@@ -23,17 +27,17 @@ class FPSDEMO_API AShooterNPC : public AFPSDemoCharacter, public IShooterWeaponH
 
 public:
 
-	/** Current HP for this character. It dies if it reaches zero through damage */
+	/** NPC 当前生命值（降至 0 时死亡，网络同步） */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_CurrentHP, Category="Damage")
 	float CurrentHP = 100.0f;
 	
-	/** If true, this NPC will respawn after death */
+	/** 是否允许 NPC 死亡后重生 */
 	UPROPERTY(EditAnywhere, Category="Respawn")
 	bool bCanRespawn = false;
 
-	/** Time to wait before respawning this NPC (0 means no respawn) */
+	/** NPC 重生等待时间（秒，0 = 不重生） */
 	UPROPERTY(EditAnywhere, Category="Respawn")
-	float RespawnTime = 0.0f; // Default to 0 (no respawn) to maintain current behavior
+	float RespawnTime = 0.0f; // 默认为 0（不重生）以保持当前行为
 
 protected:
 
@@ -45,45 +49,45 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Damage")
 	float DeferredDestructionTime = 5.0f;
 
-	/** Team byte for this character */
+	/** NPC 所属团队 ID（用于团队识别，默认 1 = 敌人团队） */
 	UPROPERTY(EditAnywhere, Replicated, Category="Team")
 	uint8 TeamByte = 1;
 
-	/** Pointer to the equipped weapon */
+	/** NPC 装备的武器指针 */
 	TObjectPtr<AShooterWeapon> Weapon;
 
-	/** Type of weapon to spawn for this character */
+	/** NPC 使用的武器类型（在 BeginPlay 时生成） */
 	UPROPERTY(EditAnywhere, Category="Weapon")
 	TSubclassOf<AShooterWeapon> WeaponClass;
 
-	/** Name of the first person mesh weapon socket */
+	/** 第一人称网格武器插槽名称 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category ="Weapons")
 	FName FirstPersonWeaponSocket = FName("HandGrip_R");
 
-	/** Name of the third person mesh weapon socket */
+	/** 第三人称网格武器插槽名称 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category ="Weapons")
 	FName ThirdPersonWeaponSocket = FName("HandGrip_R");
 
-	/** Max range for aiming calculations */
+	/** 瞄准计算的最大距离（厘米） */
 	UPROPERTY(EditAnywhere, Category="Aim")
 	float AimRange = 10000.0f;
 
-	/** Cone variance to apply while aiming */
+	/** 瞄准时的散布半角（度数，增加 AI 射击难度） */
 	UPROPERTY(EditAnywhere, Category="Aim")
 	float AimVarianceHalfAngle = 10.0f;
 
-	/** Minimum vertical offset from the target center to apply when aiming */
+	/** 瞄准目标时的最小垂直偏移（从目标中心向下，使 NPC 不会总是爆头） */
 	UPROPERTY(EditAnywhere, Category="Aim")
 	float MinAimOffsetZ = -35.0f;
 
-	/** Maximum vertical offset from the target center to apply when aiming */
+	/** 瞄准目标时的最大垂直偏移 */
 	UPROPERTY(EditAnywhere, Category="Aim")
 	float MaxAimOffsetZ = -60.0f;
 
-	/** Actor currently being targeted */
+	/** 当前正在瞄准的目标 Actor（通常是玩家） */
 	TObjectPtr<AActor> CurrentAimTarget;
 
-	/** If true, this character is currently shooting its weapon */
+	/** 当前是否正在射击 */
 	bool bIsShooting = false;
 
 	/** If true, this character has already died */
@@ -179,6 +183,10 @@ public:
 
 	/** Called after respawn to notify the AI controller */
 	void OnAfterRespawn();
+
+	/** 获取 NPC 所属的团队 ID */
+	UFUNCTION(BlueprintCallable, Category="Team")
+	uint8 GetTeamByte() const { return TeamByte; }
 
 	/** Get the lifetime replicated props */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

@@ -17,30 +17,34 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBulletCountUpdatedDelegate, int32,
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDamagedDelegate, float, LifePercent);
 
 /**
- *  A player controllable first person shooter character
- *  Manages a weapon inventory through the IShooterWeaponHolder interface
- *  Manages health and death
+ *  可玩家控制的射击游戏角色类
+ *  功能包括：
+ *  - 武器系统：通过 IShooterWeaponHolder 接口管理武器库存
+ *  - 生命值系统：HP 管理、受伤、死亡、重生
+ *  - 网络同步：支持多人网络对战（客户端-服务器架构）
+ *  - 团队系统：支持团队对战和得分统计
+ *  - AI 感知：通过噪音发射器让 AI 敌人能够感知玩家
  */
 UCLASS(abstract)
 class FPSDEMO_API AShooterCharacter : public AFPSDemoCharacter, public IShooterWeaponHolder
 {
 	GENERATED_BODY()
 	
-	/** AI Noise emitter component */
+	/** AI 噪音发射器组件：用于让 AI 感知玩家的位置（如射击、移动产生的噪音） */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UPawnNoiseEmitterComponent* PawnNoiseEmitter;
 
 protected:
 
-	/** Fire weapon input action */
+	/** 射击输入动作 */
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* FireAction;
 
-	/** Switch weapon input action */
+	/** 切换武器输入动作 */
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* SwitchWeaponAction;
 
-	/** Reload weapon input action */
+	/** 换弹输入动作 */
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* ReloadAction;
 
@@ -56,17 +60,25 @@ protected:
 	UPROPERTY(EditAnywhere, Category ="Aim", meta = (ClampMin = 0, ClampMax = 100000, Units = "cm"))
 	float MaxAimDistance = 10000.0f;
 
-	/** Max HP this character can have */
+	/** 角色的最大生命值 */
 	UPROPERTY(EditAnywhere, Category="Health")
 	float MaxHP = 500.0f;
 
-	/** Current HP remaining to this character */
+	/** 当前剩余生命值（网络同步属性，服务器权威，客户端通过 OnRep_CurrentHP 接收更新） */
 	UPROPERTY(ReplicatedUsing=OnRep_CurrentHP, BlueprintReadOnly, Category="Health")
 	float CurrentHP = 0.0f;
 
-	/** Team ID for this character*/
+	/** 角色所属的团队 ID（用于团队对战和得分统计） */
 	UPROPERTY(EditAnywhere, Replicated, Category="Team")
 	uint8 TeamByte = 0;
+
+public:
+
+	/** 获取角色所属的团队 ID */
+	UFUNCTION(BlueprintCallable, Category="Team")
+	uint8 GetTeamByte() const { return TeamByte; }
+
+protected:
 
 	/** List of weapons picked up by the character */
 	TArray<AShooterWeapon*> OwnedWeapons;
@@ -79,18 +91,18 @@ protected:
 
 	FTimerHandle RespawnTimer;
 
-	/** Duration of invulnerability after respawn (in seconds) */
+	/** 重生后的无敌时间（秒） */
 	UPROPERTY(EditAnywhere, Category="Health", meta = (ClampMin = 0, ClampMax = 10, Units = "s"))
 	float InvulnerabilityDuration = 3.0f;
 
-	/** If true, this character is currently invulnerable */
+	/** 当前是否处于无敌状态（网络同步） */
 	UPROPERTY(ReplicatedUsing=OnRep_IsInvulnerable, BlueprintReadOnly, Category="Health")
 	bool bIsInvulnerable = false;
 
-	/** Timer handle for invulnerability */
+	/** 无敌状态定时器句柄 */
 	FTimerHandle InvulnerabilityTimer;
 
-	/** Controller that last damaged this character (for kill tracking) */
+	/** 最后对角色造成伤害的控制器（用于击杀统计） */
 	TObjectPtr<AController> LastDamageInstigator;
 
 public:
@@ -119,36 +131,36 @@ protected:
 
 public:
 
-	/** Handle incoming damage */
+	/** 处理受到的伤害（服务器端权威计算） */
 	virtual float TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
 public:
 
-	/** Handles start firing input */
+	/** 开始射击（客户端调用，本地立即反馈 + 服务器 RPC） */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoStartFiring();
 
-	/** Handles stop firing input */
+	/** 停止射击（客户端调用，本地立即反馈 + 服务器 RPC） */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoStopFiring();
 
-	/** Handles switch weapon input */
+	/** 切换武器 */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoSwitchWeapon();
 
-	/** Handles reload input */
+	/** 换弹 */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoReload();
 
-	/** Server RPC for starting fire */
+	/** 服务器 RPC：开始射击（客户端-服务器网络同步） */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerStartFiring();
 
-	/** Server RPC for stopping fire */
+	/** 服务器 RPC：停止射击（客户端-服务器网络同步） */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerStopFiring();
 
-	/** Server RPC for reloading */
+	/** 服务器 RPC：换弹（客户端-服务器网络同步） */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerReload();
 
@@ -190,25 +202,25 @@ protected:
 	/** Returns true if the character already owns a weapon of the given class */
 	AShooterWeapon* FindWeaponOfType(TSubclassOf<AShooterWeapon> WeaponClass) const;
 
-	/** Called when this character's HP is depleted */
+	/** 角色死亡处理：禁用输入、停止移动、记录击杀/死亡统计、触发重生 */
 	void Die();
 
-	/** Called to allow Blueprint code to react to this character's death */
+	/** 蓝图可实现的死亡事件（允许在蓝图中添加死亡特效、音效等） */
 	UFUNCTION(BlueprintImplementableEvent, Category="Shooter", meta = (DisplayName = "On Death"))
 	void BP_OnDeath();
 
-	/** Called from the respawn timer to destroy this character and force the PC to respawn */
+	/** 重生处理：销毁当前角色，强制 PlayerController 重新生成角色 */
 	void OnRespawn();
 
-	/** Replication function for CurrentHP */
+	/** 生命值复制回调函数：当服务器同步 CurrentHP 到客户端时调用（更新 UI、特效等） */
 	UFUNCTION()
 	void OnRep_CurrentHP();
 
-	/** Replication function for bIsInvulnerable */
+	/** 无敌状态复制回调函数：当服务器同步 bIsInvulnerable 到客户端时调用 */
 	UFUNCTION()
 	void OnRep_IsInvulnerable();
 
-	/** Called when invulnerability expires */
+	/** 无敌时间结束回调 */
 	void OnInvulnerabilityExpired();
 
 public:

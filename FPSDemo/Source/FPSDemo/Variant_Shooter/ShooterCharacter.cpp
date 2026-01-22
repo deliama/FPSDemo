@@ -3,6 +3,7 @@
 
 #include "ShooterCharacter.h"
 #include "ShooterWeapon.h"
+#include "Variant_Shooter/AI/ShooterNPC.h"
 #include "EnhancedInputComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/PawnNoiseEmitterComponent.h"
@@ -18,32 +19,44 @@
 
 AShooterCharacter::AShooterCharacter()
 {
-	// create the noise emitter component
+	// 创建噪音发射器组件：用于让 AI 感知玩家的位置（射击、移动等动作会产生噪音）
 	PawnNoiseEmitter = CreateDefaultSubobject<UPawnNoiseEmitterComponent>(TEXT("Pawn Noise Emitter"));
 
-	// configure movement
+	// 配置角色移动：设置旋转速率（每秒 600 度）
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 600.0f, 0.0f);
 
-	// Enable replication
+	// 启用网络复制：允许角色在多人游戏中同步
 	bReplicates = true;
-	SetReplicateMovement(true);
+	SetReplicateMovement(true);  // 复制角色移动
 }
 
 void AShooterCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// reset HP to max
+	// 初始化生命值为最大值
 	CurrentHP = MaxHP;
 
-	// Start invulnerability period after spawn
+	// 服务器端：启动重生后的无敌时间（防止刚重生就被秒杀）
 	if (HasAuthority())
 	{
 		bIsInvulnerable = true;
 		GetWorld()->GetTimerManager().SetTimer(InvulnerabilityTimer, this, &AShooterCharacter::OnInvulnerabilityExpired, InvulnerabilityDuration, false);
 	}
 
-	// update the HUD
+	// 调试：记录角色的团队 ID
+	UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::BeginPlay] Character spawned - TeamByte: %d, Character: %s"), 
+		TeamByte, *GetNameSafe(this));
+	if (AController* Ctrl = GetController())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::BeginPlay] Character controller: %s"), *GetNameSafe(Ctrl));
+		if (APlayerController* PC = Cast<APlayerController>(Ctrl))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::BeginPlay] Character is controlled by PlayerController"));
+		}
+	}
+
+	// 更新 HUD：通知 UI 更新生命值显示（1.0 = 100% 生命值）
 	OnDamaged.Broadcast(1.0f);
 }
 
@@ -81,40 +94,40 @@ void AShooterCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 
 float AShooterCharacter::TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
-	// Only process damage on server
+	// 仅在服务器端处理伤害（服务器权威，防止作弊）
 	if (!HasAuthority())
 	{
 		return 0.0f;
 	}
 
-	// ignore if already dead
+	// 如果已经死亡，忽略伤害
 	if (CurrentHP <= 0.0f)
 	{
 		return 0.0f;
 	}
 
-	// ignore damage if invulnerable
+	// 如果处于无敌状态，忽略伤害（如重生后的无敌时间）
 	if (bIsInvulnerable)
 	{
 		return 0.0f;
 	}
 
-	// Store the instigator for kill tracking
+	// 记录最后造成伤害的控制器（用于击杀统计）
 	if (EventInstigator)
 	{
 		LastDamageInstigator = EventInstigator;
 	}
 
-	// Reduce HP
+	// 减少生命值
 	CurrentHP -= Damage;
 
-	// Have we depleted HP?
+	// 检查是否生命值耗尽，触发死亡
 	if (CurrentHP <= 0.0f)
 	{
 		Die();
 	}
 
-	// update the HUD (will also be called via OnRep_CurrentHP on clients)
+	// 更新 HUD（服务器端立即更新，客户端通过 OnRep_CurrentHP 接收更新）
 	OnDamaged.Broadcast(FMath::Max(0.0f, CurrentHP / MaxHP));
 
 	return Damage;
@@ -122,25 +135,25 @@ float AShooterCharacter::TakeDamage(float Damage, struct FDamageEvent const& Dam
 
 void AShooterCharacter::DoStartFiring()
 {
-	// Fire locally for immediate feedback
+	// 客户端预测：立即本地执行射击（提供即时反馈，避免延迟感）
 	if (CurrentWeapon)
 	{
 		CurrentWeapon->StartFiring();
 	}
 	
-	// Server RPC for firing (always call, it will validate on server)
+	// 服务器 RPC：同步射击到服务器（服务器会验证并执行，确保游戏逻辑一致性）
 	ServerStartFiring();
 }
 
 void AShooterCharacter::DoStopFiring()
 {
-	// Stop firing locally for immediate feedback
+	// 客户端预测：立即本地停止射击
 	if (CurrentWeapon)
 	{
 		CurrentWeapon->StopFiring();
 	}
 	
-	// Server RPC for stopping fire (always call, it will validate on server)
+	// 服务器 RPC：同步停止射击到服务器
 	ServerStopFiring();
 }
 
@@ -304,25 +317,28 @@ AShooterWeapon* AShooterCharacter::FindWeaponOfType(TSubclassOf<AShooterWeapon> 
 
 void AShooterCharacter::Die()
 {
-	// deactivate the weapon
+	UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] Character died - Team: %d"), TeamByte);
+
+	// 停用当前武器
 	if (IsValid(CurrentWeapon))
 	{
 		CurrentWeapon->DeactivateWeapon();
 	}
 
-	// Record statistics and update UI
+	// 记录击杀/死亡统计并更新 UI
 	if (AShooterGameMode* GM = Cast<AShooterGameMode>(GetWorld()->GetAuthGameMode()))
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] GameMode found, processing kill/death"));
 		APlayerController* VictimPC = Cast<APlayerController>(GetController());
 		APlayerController* KillerPC = nullptr;
 
-		// Record death for this player
+		// 记录死亡统计（增加死亡数）
 		if (VictimPC)
 		{
 			GM->RecordDeath(VictimPC);
 		}
 
-		// Record kill for the killer
+		// 记录击杀统计（增加击杀数）
 		if (LastDamageInstigator)
 		{
 			KillerPC = Cast<APlayerController>(LastDamageInstigator);
@@ -332,39 +348,86 @@ void AShooterCharacter::Die()
 			}
 		}
 
-		// Show kill feed and death screen
+		// 显示击杀信息和死亡界面
 		if (GM && GM->ShooterUI)
 		{
 			FString KillerName = KillerPC ? KillerPC->GetPlayerState<APlayerState>()->GetPlayerName() : TEXT("Unknown");
 			FString VictimName = VictimPC ? VictimPC->GetPlayerState<APlayerState>()->GetPlayerName() : TEXT("Unknown");
 
-			// Show kill feed for all players
+			// 向所有玩家显示击杀信息（击杀提示）
 			GM->ShooterUI->BP_ShowKillFeed(KillerName, VictimName);
 
-			// Show death screen for the victim
+			// 仅向被击杀的玩家显示死亡界面
 			if (VictimPC && VictimPC->IsLocalController())
 			{
 				GM->ShooterUI->BP_ShowDeathScreen(KillerName, RespawnTime);
 			}
 		}
 
-		// increment the team score
-		GM->IncrementTeamScore(TeamByte);
+		// 增加击杀者团队的得分
+		// 获取击杀者的团队ID（从造成伤害的控制器获取其控制的角色的团队）
+		uint8 KillerTeamByte = 255;
+		FString KillerType = TEXT("Unknown");
+		
+		if (LastDamageInstigator && LastDamageInstigator->GetPawn())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] LastDamageInstigator: %s, Pawn: %s"), 
+				*GetNameSafe(LastDamageInstigator), *GetNameSafe(LastDamageInstigator->GetPawn()));
+			
+			// 尝试从击杀者角色获取团队ID
+			if (AShooterCharacter* KillerCharacter = Cast<AShooterCharacter>(LastDamageInstigator->GetPawn()))
+			{
+				KillerTeamByte = KillerCharacter->GetTeamByte();
+				KillerType = TEXT("ShooterCharacter");
+				UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] Killer is ShooterCharacter, TeamByte: %d"), KillerTeamByte);
+			}
+			// 如果是AI NPC击杀的，也获取其团队ID
+			else if (AShooterNPC* KillerNPC = Cast<AShooterNPC>(LastDamageInstigator->GetPawn()))
+			{
+				KillerTeamByte = KillerNPC->GetTeamByte();
+				KillerType = TEXT("ShooterNPC");
+				UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] Killer is ShooterNPC, TeamByte: %d"), KillerTeamByte);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] LastDamageInstigator or Pawn is null"));
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] ===== KILL SCORE LOGIC ====="));
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] Victim TeamByte: %d, Killer TeamByte: %d, Killer Type: %s"), 
+			TeamByte, KillerTeamByte, *KillerType);
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] KillerTeamByte != 255: %d"), (KillerTeamByte != 255));
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] KillerTeamByte != TeamByte: %d"), (KillerTeamByte != TeamByte));
+
+		// 只有当击杀者和被击杀者属于不同团队时才增加得分
+		if (KillerTeamByte != 255 && KillerTeamByte != TeamByte)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] ✓ Incrementing score for team %d (killer) vs team %d (victim)"), 
+				KillerTeamByte, TeamByte);
+			GM->IncrementTeamScore(KillerTeamByte);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] ✗ Not incrementing score - KillerTeam: %d, VictimTeam: %d"), 
+				KillerTeamByte, TeamByte);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterCharacter::Die] ============================="));
 	}
 		
-	// stop character movement
+	// 立即停止角色移动
 	GetCharacterMovement()->StopMovementImmediately();
 
-	// disable controls
+	// 禁用输入控制
 	DisableInput(nullptr);
 
-	// reset the bullet counter UI
+	// 重置弹药计数器 UI
 	OnBulletCountUpdated.Broadcast(0, 0);
 
-	// call the BP handler
+	// 调用蓝图死亡处理（可在蓝图中添加死亡特效、音效等）
 	BP_OnDeath();
 
-	// schedule character respawn
+	// 设置重生定时器：等待 RespawnTime 秒后重生
 	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &AShooterCharacter::OnRespawn, RespawnTime, false);
 }
 
@@ -409,7 +472,8 @@ void AShooterCharacter::OnRep_IsInvulnerable()
 
 void AShooterCharacter::OnRep_CurrentHP()
 {
-	// update the HUD when HP changes
+	// 客户端接收生命值更新后，更新 HUD（生命值条、伤害效果等）
+	// 计算生命值百分比（0.0 - 1.0），通知 UI 更新
 	OnDamaged.Broadcast(FMath::Max(0.0f, CurrentHP / MaxHP));
 }
 
@@ -424,7 +488,7 @@ void AShooterCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 
 void AShooterCharacter::ServerStartFiring_Implementation()
 {
-	// fire the current weapon on server
+	// 服务器端执行射击（服务器权威，确保所有客户端看到一致的射击行为）
 	if (CurrentWeapon)
 	{
 		CurrentWeapon->StartFiring();
@@ -433,12 +497,13 @@ void AShooterCharacter::ServerStartFiring_Implementation()
 
 bool AShooterCharacter::ServerStartFiring_Validate()
 {
+	// RPC 验证函数：可以在这里添加反作弊检查（如射速限制、距离检查等）
 	return true;
 }
 
 void AShooterCharacter::ServerStopFiring_Implementation()
 {
-	// stop firing the current weapon on server
+	// 服务器端停止射击
 	if (CurrentWeapon)
 	{
 		CurrentWeapon->StopFiring();
@@ -447,12 +512,13 @@ void AShooterCharacter::ServerStopFiring_Implementation()
 
 bool AShooterCharacter::ServerStopFiring_Validate()
 {
+	// RPC 验证函数
 	return true;
 }
 
 void AShooterCharacter::ServerReload_Implementation()
 {
-	// Reload the current weapon on server
+	// 服务器端执行换弹（服务器验证是否可以换弹）
 	if (CurrentWeapon && CurrentWeapon->CanReload())
 	{
 		CurrentWeapon->StartReload();
@@ -461,5 +527,6 @@ void AShooterCharacter::ServerReload_Implementation()
 
 bool AShooterCharacter::ServerReload_Validate()
 {
+	// RPC 验证函数：可以添加换弹频率限制等反作弊检查
 	return true;
 }

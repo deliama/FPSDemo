@@ -3,6 +3,7 @@
 
 #include "Variant_Shooter/AI/ShooterNPC.h"
 #include "ShooterWeapon.h"
+#include "ShooterCharacter.h"  // Needed for AShooterCharacter
 #include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -218,18 +219,23 @@ void AShooterNPC::OnSemiWeaponRefire()
 
 void AShooterNPC::Die()
 {
-	// ignore if already dead
+	// 如果已经死亡，忽略
 	if (bIsDead)
 	{
 		return;
 	}
 
-	// raise the dead flag
+	// 停止射击（重要：死亡时确保停止所有射击动作）
+	StopShooting();
+
+	// 设置死亡标志
 	bIsDead = true;
 
 	// Record statistics
 	if (AShooterGameMode* GM = Cast<AShooterGameMode>(GetWorld()->GetAuthGameMode()))
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] NPC died - Team: %d"), TeamByte);
+		
 		// Record kill for the killer (NPCs don't have PlayerController, so only record if killer is a player)
 		if (LastDamageInstigator)
 		{
@@ -239,8 +245,56 @@ void AShooterNPC::Die()
 			}
 		}
 
-		// increment the team score
-		GM->IncrementTeamScore(TeamByte);
+		// 增加击杀者团队的得分（不是 NPC 自己的团队得分！）
+		// 获取击杀者的团队ID（从造成伤害的控制器获取其控制的角色的团队）
+		uint8 KillerTeamByte = 255;
+		FString KillerType = TEXT("Unknown");
+		
+		if (LastDamageInstigator && LastDamageInstigator->GetPawn())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] LastDamageInstigator: %s, Pawn: %s"), 
+				*GetNameSafe(LastDamageInstigator), *GetNameSafe(LastDamageInstigator->GetPawn()));
+			
+			// 尝试从击杀者角色获取团队ID
+			if (AShooterCharacter* KillerCharacter = Cast<AShooterCharacter>(LastDamageInstigator->GetPawn()))
+			{
+				KillerTeamByte = KillerCharacter->GetTeamByte();
+				KillerType = TEXT("ShooterCharacter");
+				UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] Killer is ShooterCharacter, TeamByte: %d"), KillerTeamByte);
+			}
+			// 如果是另一个 NPC 击杀的，也获取其团队ID
+			else if (AShooterNPC* KillerNPC = Cast<AShooterNPC>(LastDamageInstigator->GetPawn()))
+			{
+				KillerTeamByte = KillerNPC->GetTeamByte();
+				KillerType = TEXT("ShooterNPC");
+				UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] Killer is ShooterNPC, TeamByte: %d"), KillerTeamByte);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] LastDamageInstigator or Pawn is null"));
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] ===== NPC KILL SCORE LOGIC ====="));
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] NPC TeamByte: %d, Killer TeamByte: %d, Killer Type: %s"), 
+			TeamByte, KillerTeamByte, *KillerType);
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] KillerTeamByte != 255: %d"), (KillerTeamByte != 255));
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] KillerTeamByte != TeamByte: %d"), (KillerTeamByte != TeamByte));
+
+		// 只有当击杀者和被击杀者属于不同团队时才增加得分
+		// 注意：这里应该增加击杀者的团队得分，而不是 NPC 自己的团队得分！
+		if (KillerTeamByte != 255 && KillerTeamByte != TeamByte)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] ✓ Incrementing score for KILLER team %d (killer) vs NPC team %d (victim)"), 
+				KillerTeamByte, TeamByte);
+			GM->IncrementTeamScore(KillerTeamByte);  // 修复：增加击杀者的团队得分
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] ✗ Not incrementing score - KillerTeam: %d, VictimTeam: %d"), 
+				KillerTeamByte, TeamByte);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[ShooterNPC::Die] =================================="));
 	}
 
 	// disable capsule collision
@@ -275,104 +329,140 @@ void AShooterNPC::DeferredDestruction()
 
 void AShooterNPC::Respawn()
 {
-	//将NPC传送回出生点
+	// 将 NPC 传送回出生点
 	FTransform RespawnTransform = StartTransform;
 	FVector StartLocation = RespawnTransform.GetLocation();
 	StartLocation.Z += 10.0f;
 	RespawnTransform.SetLocation(StartLocation);
-	SetActorTransform(RespawnTransform,false,nullptr,ETeleportType::TeleportPhysics);
+	SetActorTransform(RespawnTransform, false, nullptr, ETeleportType::TeleportPhysics);
 	
-	// Reset health
-	CurrentHP = 100.0f; // Or whatever max HP should be
+	// 重置生命值
+	CurrentHP = 100.0f; // 或者使用最大生命值
 	bIsDead = false;
+
+	// 重置射击相关状态（重要：防止重生后卡在射击状态）
+	bIsShooting = false;
+	CurrentAimTarget = nullptr;
+	
+	// 确保武器停止射击（如果武器还在射击状态）
+	if (Weapon && Weapon->IsValidLowLevel())
+	{
+		Weapon->StopFiring();
+		// 先停用武器
+		OnWeaponDeactivated(Weapon);
+	}
 
 	// Reset physics
 	GetMesh()->SetSimulatePhysics(false);
 	GetMesh()->SetCollisionProfileName(TEXT("Pawn"));
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	
-	// Reset the physics transforms to match the skeletal mesh
+	// 重置物理变换以匹配骨骼网格
 	GetMesh()->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f,0.0f,-90.0f),FRotator(0.0f,0.0f,0.0f));
+	GetMesh()->SetRelativeLocationAndRotation(FVector(0.0f, 0.0f, -90.0f), FRotator(0.0f, -90.0f, 0.0f));
 	GetMesh()->ResetAllBodiesSimulatePhysics();
 	
-	// Reset movement
+	// 重置移动
 	GetCharacterMovement()->SetMovementMode(EMovementMode::MOVE_Walking);
 	GetCharacterMovement()->bUseControllerDesiredRotation = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 	GetCharacterMovement()->Velocity = FVector::ZeroVector;
 	GetCharacterMovement()->Activate();
 
-	// If we have a weapon, make sure it's properly attached and activated
-	if (Weapon)
+	// 确保武器正确附加和激活
+	if (Weapon && Weapon->IsValidLowLevel())
 	{
-		// First deactivate the current weapon if it was active
-		OnWeaponDeactivated(Weapon);
-		
-		// Attach weapon meshes
+		// 附加武器网格
 		AttachWeaponMeshes(Weapon);
 		
-		// Activate the weapon properly
+		// 激活武器
 		OnWeaponActivated(Weapon);
 	}
 	
-	// Reset any other state as needed
+	// 重置网络复制设置
 	bReplicates = true;
 	SetReplicateMovement(true);
 	
-	// Ensure the NPC is properly enabled for input/behavior
+	// 确保 NPC 正确启用
 	SetActorHiddenInGame(false);
 	SetActorEnableCollision(true);
 	
-	// Notify that respawn is complete
+	// 通知重生完成
 	OnAfterRespawn();
 }
 
 void AShooterNPC::OnAfterRespawn()
 {
-	// This method is called after the NPC respawns to allow any post-respawn setup
-	// Try to get the AI controller to repossess this pawn
-	if (AController* NPCController = GetController())
+	// 此方法在 NPC 重生后调用，用于设置重生后的状态
+	// 尝试让 AI Controller 重新占据这个 Pawn
+	
+	// 仅在服务器端处理（Controller 相关操作应该是服务器权威的）
+	if (!HasAuthority())
 	{
-		if(NPCController->GetPawn() !=  this)
-		{
-			NPCController->Possess(this);
-			UE_LOG(LogTemp, Warning, TEXT("Possessed NPC"));
-		}
-		if (AShooterAIController* AIController = Cast<AShooterAIController>(NPCController))
-		{
-			
-			AIController->RequestRepossess(this);
-			UE_LOG(LogTemp, Warning, TEXT("Repossessed NPC"));
-		}
+		return;
 	}
-	else
+	
+	AController* NPCController = GetController();
+	
+	// 如果没有 Controller，可能需要重新创建（这种情况应该很少见）
+	if (!NPCController)
 	{
-		// If we don't have an AI controller yet, try to get one assigned
-		// This might happen if the AI controller was destroyed
 		UE_LOG(LogTemp, Warning, TEXT("NPC respawned without AI controller - this may need manual repossessing"));
+		return;
+	}
+	
+	// 如果 Controller 还没有占据这个 Pawn，先占据它
+	if (NPCController->GetPawn() != this)
+	{
+		NPCController->Possess(this);
+		UE_LOG(LogTemp, Log, TEXT("AI Controller repossessed NPC after respawn"));
+	}
+	
+	// 如果是 ShooterAIController，调用重新占据方法（这会重置 StateTree 和所有状态）
+	if (AShooterAIController* AIController = Cast<AShooterAIController>(NPCController))
+	{
+		AIController->RequestRepossess(this);
+		UE_LOG(LogTemp, Log, TEXT("AI Controller state reset for respawned NPC"));
 	}
 }
 
 void AShooterNPC::StartShooting(AActor* ActorToShoot)
 {
-	// save the aim target
+	// 检查 NPC 是否已死亡或无效（防止死亡状态下的 NPC 射击）
+	if (bIsDead || !IsValid(this))
+	{
+		return;
+	}
+	
+	// 检查武器是否有效
+	if (!Weapon || !Weapon->IsValidLowLevel())
+	{
+		return;
+	}
+
+	// 保存瞄准目标
 	CurrentAimTarget = ActorToShoot;
 
-	// raise the flag
+	// 设置射击标志
 	bIsShooting = true;
 
-	// signal the weapon
+	// 通知武器开始射击
 	Weapon->StartFiring();
 }
 
 void AShooterNPC::StopShooting()
 {
-	// lower the flag
+	// 清除射击标志
 	bIsShooting = false;
+	
+	// 清除瞄准目标
+	CurrentAimTarget = nullptr;
 
-	// signal the weapon
-	Weapon->StopFiring();
+	// 通知武器停止射击（如果武器有效）
+	if (Weapon && Weapon->IsValidLowLevel())
+	{
+		Weapon->StopFiring();
+	}
 }
 
 void AShooterNPC::OnRep_CurrentHP()

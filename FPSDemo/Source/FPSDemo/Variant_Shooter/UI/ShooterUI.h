@@ -45,4 +45,17 @@ public:
 	/** Shows victory screen with winning team and statistics */
 	UFUNCTION(BlueprintImplementableEvent, Category="Shooter", meta = (DisplayName = "Show Victory Screen"))
 	void BP_ShowVictoryScreen(uint8 WinningTeam, const TArray<FPlayerStats>& PlayerStats);
+
+	/** Shows game end screen with victory/defeat message and restart/quit buttons
+	 *  @param bIsVictory - true if the player's team won, false if they lost
+	 *  @param WinningTeam - the ID of the winning team
+	 *  @param PlayerTeam - the ID of the viewing player's team
+	 *  @param PlayerStats - statistics for all players
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category="Shooter", meta = (DisplayName = "Show Game End Screen"))
+	void BP_ShowGameEndScreen(bool bIsVictory, uint8 WinningTeam, uint8 PlayerTeam, const TArray<FPlayerStats>& PlayerStats);
+
+	/** Hides game end screen (called when UI is initialized to ensure end screen is hidden) */
+	UFUNCTION(BlueprintImplementableEvent, Category="Shooter", meta = (DisplayName = "Hide Game End Screen"))
+	void BP_HideGameEndScreen();
 };
